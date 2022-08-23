@@ -37,7 +37,7 @@ CREATE TABLE Departments
 	FOREIGN KEY (CityId) REFERENCES Cities (Id) ON DELETE CASCADE
 );
 
-CREATE TABLE SotialStatus
+CREATE TABLE SocialStatus
 (
 	Id INT PRIMARY KEY IDENTITY,
 	StatusName NVARCHAR(30) NOT NULL,
@@ -53,7 +53,7 @@ CREATE TABLE Clients
 	Email NVARCHAR(30),
 	Age INT CHECK(Age > 0 AND Age < 100),	
 	StatusId INT,
-	FOREIGN KEY (StatusId) REFERENCES SotialStatus (Id) ON DELETE CASCADE,
+	FOREIGN KEY (StatusId) REFERENCES SocialStatus (Id) ON DELETE CASCADE,
 		CONSTRAINT UQ_Phone UNIQUE (Phone),
 );
 
@@ -189,7 +189,7 @@ VALUES
 	(SELECT Id FROM Cities WHERE CityName = 'Minsk' )
 );
 
-INSERT INTO SotialStatus(StatusName)
+INSERT INTO SocialStatus(StatusName)
 VALUES
 ('unidentified'),
 ('worker'),
@@ -202,39 +202,39 @@ INSERT INTO Clients(FirstName, SecondName, Phone, Email, Age, StatusId)
 VALUES
 (
 	'Nikita', 'Hripach', '375333355315', 'nikita.hripach@gmail.com', 18,
-	(SELECT Id FROM SotialStatus WHERE StatusName = 'student')
+	(SELECT Id FROM SocialStatus WHERE StatusName = 'student')
 ),
 (
 	'Monica', 'Berry', '375669198173', 'MonicaKBerry@rhyta.com', 69,
-	(SELECT Id FROM SotialStatus WHERE StatusName = 'pensioner')
+	(SELECT Id FROM SocialStatus WHERE StatusName = 'pensioner')
 ),
 (
 	'Walter', 'Arnett', '375781064799', 'WalterCArnett@armyspy.com', 74,
-	(SELECT Id FROM SotialStatus WHERE StatusName = 'pensioner')
+	(SELECT Id FROM SocialStatus WHERE StatusName = 'pensioner')
 ),
 (
 	'Justin', 'Soucy', '375888653212', 'JustinRSoucy@teleworm.us', 47,
-	(SELECT Id FROM SotialStatus WHERE StatusName = 'worker')
+	(SELECT Id FROM SocialStatus WHERE StatusName = 'worker')
 ),
 (
 	'Julian', 'Unger', '375722510239', 'JulianCUnger@dayrep.com', 20,
-	(SELECT Id FROM SotialStatus WHERE StatusName = 'worker')
+	(SELECT Id FROM SocialStatus WHERE StatusName = 'worker')
 ),
 (
 	'Lynnette', 'Vega', '375679971433', 'LynnetteRVega@jourrapide.com', 41,
-	(SELECT Id FROM SotialStatus WHERE StatusName = 'student')
+	(SELECT Id FROM SocialStatus WHERE StatusName = 'student')
 ),
 (
 	'Maribel', 'Stansfield', '375532665762', 'MaribelEStansfield@dayrep.com', 25,
-	(SELECT Id FROM SotialStatus WHERE StatusName = 'student')
+	(SELECT Id FROM SocialStatus WHERE StatusName = 'student')
 ),
 (
 	'Agnes', 'Lara', '375884541219', 'AgnesJLara@rhyta.com', 27,
-	(SELECT Id FROM SotialStatus WHERE StatusName = 'invalid')
+	(SELECT Id FROM SocialStatus WHERE StatusName = 'invalid')
 ),
 (
 	'Mario', 'Allen', '375519648428', 'MarioNAllen@rhyta.com', 34 ,
-	(SELECT Id FROM SotialStatus WHERE StatusName = 'unidentified')
+	(SELECT Id FROM SocialStatus WHERE StatusName = 'unidentified')
 );
 
 INSERT INTO Accounts(Balance, BankId, ClientId)
@@ -419,13 +419,11 @@ GO
 	по карточкам. В отдельной колонке вывести разницу
 */
 
-SELECT Accounts.Id as AccountId, Accounts.Balance AS AccountBalance, ISNULL(CardsBalance.SumBalance, 0) as CardBalance, (Accounts.Balance - ISNULL(CardsBalance.SumBalance, 0)) as BalanceDifference
+SELECT  Accounts.Id as AccountId, MAX(Accounts.Balance) AS AccountBalance, ISNULL(SUM(Cards.Balance), 0) as CardBalance, (MAX(Accounts.Balance) - ISNULL(SUM(Cards.Balance), 0)) as BalanceDifference
 FROM Accounts
-	LEFT JOIN 
-		(SELECT AccountId, SUM(Cards.Balance) AS SumBalance
-		 FROM Cards
-		 GROUP BY AccountId) AS CardsBalance ON Accounts.Id = CardsBalance.AccountId
-WHERE Accounts.Balance != ISNULL(CardsBalance.SumBalance, 0)
+	LEFT JOIN Cards ON Accounts.Id = Cards.AccountId
+GROUP BY Accounts.Id
+HAVING ISNULL(SUM(Cards.Balance), 0) != MAX(Accounts.Balance)
 
 GO
 
@@ -434,22 +432,22 @@ GO
 	соц статуса (2 реализации, GROUP BY и подзапросом)
 */
 
-SELECT SotialStatus.Id AS StatusId,  SotialStatus.StatusName, COUNT(Cards.Id) as CardsAmount
-FROM SotialStatus
-	LEFT JOIN Clients ON SotialStatus.Id = Clients.StatusId
+SELECT SocialStatus.Id AS StatusId,  MAX(SocialStatus.StatusName) AS StatusName, COUNT(Cards.Id) as CardsAmount
+FROM SocialStatus
+	LEFT JOIN Clients ON SocialStatus.Id = Clients.StatusId
 	LEFT JOIN Accounts ON Clients.Id = Accounts.ClientId
 	LEFT JOIN Cards ON Accounts.Id = Cards.AccountId
-GROUP BY SotialStatus.Id, SotialStatus.StatusName
+GROUP BY SocialStatus.Id
 
 GO
 
-SELECT SotialStatus.Id AS StatusId, SotialStatus.StatusName,
+SELECT SocialStatus.Id AS StatusId, SocialStatus.StatusName,
 	(SELECT COUNT(*)
-	 FROM Cards, Accounts, Clients
-	 WHERE Cards.AccountId = Accounts.Id
-		 AND Accounts.ClientId = Clients.Id
-		 AND Clients.StatusId = SotialStatus.Id) AS CardsAmount
-FROM SotialStatus
+	 FROM Cards
+		JOIN Accounts ON Cards.AccountId = Accounts.Id
+		JOIN Clients ON Accounts.ClientId = Clients.Id
+	 WHERE Clients.StatusId = SocialStatus.Id) AS CardsAmount
+FROM SocialStatus
 
 GO
 
@@ -464,13 +462,13 @@ CREATE PROCEDURE AddTenToBalanceByStatusId
 AS 
 BEGIN
 	
-	IF (SELECT Id FROM SotialStatus WHERE Id = @statusId) IS NULL
+	IF (SELECT Id FROM SocialStatus WHERE Id = @statusId) IS NULL
 		THROW 60000, 'Status does not exist', 1;
 
-	IF (SELECT COUNT(*) 
+	IF NOT EXISTS(SELECT COUNT(*) 
 		FROM Accounts 
 			JOIN Clients ON Accounts.ClientId = Clients.Id 
-		WHERE StatusId = @statusId) = 0
+		WHERE StatusId = @statusId)
 		THROW 60001, 'No linked accounts', 1;
 
 
@@ -487,9 +485,9 @@ GO
 /*Тест процедуры AddTenToBalanceByStatusId. Ошибок не ожидается*/
 
 DECLARE @updateStatus INT;
-SET @updateStatus = (SELECT SotialStatus.Id 
-					 FROM SotialStatus 
-					 WHERE SotialStatus.StatusName = 'worker')
+SET @updateStatus = (SELECT SocialStatus.Id 
+					 FROM SocialStatus 
+					 WHERE SocialStatus.StatusName = 'worker')
 
 SELECT Accounts.Id AS AccountId, Accounts.Balance, Clients.Id AS ClientId, Clients.StatusId
 FROM Accounts
@@ -511,10 +509,13 @@ GO
 	для перевода на карточку
 */
 
-SELECT Accounts.Id AS AccountId, (Accounts.Balance - ISNULL(SUM(Cards.Balance), 0)) AS FreeMoney
-FROM Accounts
-	LEFT JOIN Cards ON Accounts.Id =  Cards.AccountId
-GROUP BY Accounts.Id, Accounts.Balance
+SELECT Clients.Id AS ClientId, (ISNULL(SUM(AccountData.AccountBalance), 0) - ISNULL(SUM(AccountData.CardsSum), 0)) AS FreeMoney
+FROM Clients
+	LEFT JOIN (SELECT MAX(Accounts.ClientId) AS ClientId,  MAX(Accounts.Balance) AS AccountBalance, ISNULL(SUM(Cards.Balance), 0) AS CardsSum
+			   FROM Accounts
+				  LEFT JOIN Cards ON Accounts.Id =  Cards.AccountId
+			   GROUP BY Accounts.Id) AS AccountData ON AccountData.ClientId = Clients.Id
+GROUP BY Clients.Id
 
 GO
 
@@ -538,26 +539,23 @@ BEGIN
 	IF (SELECT Id FROM Cards WHERE Id = @cardId) IS NULL
 		THROW 60002, 'Card does not exist', 1;
 	
-	SET @freeMoney = (SELECT (AccountBalance - CardsBalance.CardsSumBalance) AS FreeMoney
-					  FROM (SELECT Accounts.Id AS AccountId, Accounts.Balance AS AccountBalance
-						    FROM Accounts
-						    WHERE Accounts.Id = (SELECT Cards.AccountId
-											     FROM Cards
-											     WHERE Cards.Id = @cardId)) AS Account
-					      JOIN (SELECT AccountId, SUM(Cards.Balance) AS CardsSumBalance
-							    FROM Cards
-							    GROUP BY AccountId) AS CardsBalance ON Account.AccountId = CardsBalance.AccountId)
+	SET TRANSACTION ISOLATION LEVEL SERIALIZABLE
+	BEGIN TRANSACTION
+
+	SET @freeMoney = (SELECT MAX(Accounts.Balance) - ISNULL(SUM(Cards.Balance), 0) AS FreeMoney
+					  FROM Accounts
+						 LEFT JOIN Cards ON Accounts.Id = Cards.AccountId
+					  WHERE Accounts.Id = (SELECT Cards.AccountId
+										   FROM Cards
+										   WHERE Cards.Id = @cardId)
+					  GROUP BY Accounts.Id)
 
 	IF @moneyToSend > @freeMoney
 		THROW 60003, 'Not enough money', 1;
 
-	BEGIN TRANSACTION
-
 	UPDATE Cards
 	SET Balance = Balance + @moneyToSend
-	WHERE Cards.Id = (SELECT Id 
-					  FROM Cards 
-					  WHERE Id = @cardId)
+	WHERE Cards.Id = @cardId
 
 	if (@@ERROR <> 0)
 			ROLLBACK
@@ -601,23 +599,17 @@ GO
 
 CREATE TRIGGER Accounts_UPDATE
 ON Accounts
-INSTEAD OF UPDATE
+AFTER UPDATE
 AS 
 BEGIN
-	DECLARE @cardsBalance TABLE (AccountId INT, NewBalance MONEY, CardsBalance MONEY);
-
-	INSERT @cardsBalance 
-	SELECT inserted.Id, inserted.Balance, ISNULL(SUM(Cards.Balance), 0)
-	FROM Cards 
-		RIGHT JOIN inserted ON inserted.Id = Cards.AccountId
-	GROUP BY inserted.Id, inserted.Balance
-
-	UPDATE Accounts
-	SET Balance = NewAccount.NewBalance
-	FROM Accounts 
-		JOIN @cardsBalance AS NewAccount ON Accounts.Id = NewAccount.AccountId
-	WHERE NewAccount.NewBalance >= NewAccount.CardsBalance 
-
+	IF  (0 > ANY(SELECT MAX(inserted.Balance) - ISNULL(SUM(Cards.Balance), 0) as BalanceDifference
+				 FROM inserted
+					LEFT JOIN Cards ON inserted.Id = Cards.AccountId
+				 GROUP BY inserted.Id))
+	BEGIN 
+		ROLLBACK;
+		THROW 60005, 'Account balance less than Cards Sum', 1;
+	END	
 END;
 
 GO
@@ -625,13 +617,12 @@ GO
 /*
 	Тест на триггер Accounts_UPDATE
 	Уменьшение баланса на 50 долл
-	Ожидание: Баланс у ID = 1 уменьшиться на 50, а у ID = 2 останется исходное значение
 */
 
 DECLARE @accountId TABLE(AccountId INT)
 INSERT @accountId
 VALUES 
-(1), (2)
+(1), (6)
 
 SELECT Accounts.Id AS AccountId, Accounts.Balance, SUM(Cards.Balance) AS CardsBalanceSum
 FROM Accounts
@@ -640,7 +631,7 @@ WHERE Accounts.Id = ANY(SELECT AccountId FROM @accountId)
 GROUP BY Accounts.Id, Accounts.Balance
 
 UPDATE Accounts
-SET Balance = Balance - 50
+SET Balance = Balance - 67
 WHERE Accounts.Id = ANY(SELECT AccountId FROM @accountId)
 
 SELECT Accounts.Id AS AccountId, Accounts.Balance, SUM(Cards.Balance) AS CardsBalanceSum
@@ -659,35 +650,18 @@ GO
 
 CREATE TRIGGER Cards_UPDATE
 ON Cards
-INSTEAD OF UPDATE
+AFTER UPDATE
 AS 
 BEGIN
-	DECLARE @accountData TABLE (AccountID INT, AccountBalance MONEY, OldCardsBalance MONEY)
-	DECLARE @cardsBalanceDiff TABLE (AccountId INT, BalanceDiff MONEY)
-
-	INSERT @accountData
-	SELECT Cards.AccountId, Accounts.Balance, SUM(Cards.Balance)
-	FROM Cards
-		JOIN Accounts ON Cards.AccountId = Accounts.Id
-	GROUP BY Cards.AccountId, Accounts.Balance
-
-	INSERT @cardsBalanceDiff
-	SELECT deleted.AccountId, SUM(inserted.Balance) - SUM(deleted.Balance)
-	FROM deleted
-		JOIN inserted ON deleted.Id = inserted.Id
-	GROUP BY deleted.AccountId
-
-	UPDATE Cards
-	SET Balance = inserted.Balance
-	FROM Cards
-		JOIN inserted ON Cards.Id = inserted.Id
-	WHERE inserted.Id IN (SELECT inserted.Id
-						  FROM inserted
-						  WHERE inserted.AccountId IN (SELECT Account.AccountID
-													   FROM @accountData AS Account
-														  JOIN @cardsBalanceDiff AS NewMoney ON Account.AccountID = NewMoney.AccountId
-													   WHERE AccountBalance >= OldCardsBalance + BalanceDiff))
-
+	IF 0 > ANY(SELECT MAX(Accounts.Balance) - ISNULL(SUM(Cards.Balance), 0) AS FreeMoney
+			   FROM Accounts
+				  LEFT JOIN Cards ON Accounts.Id = Cards.AccountId
+			   WHERE Accounts.Id IN (SELECT inserted.AccountId FROM inserted)
+			   GROUP BY Accounts.Id)
+	BEGIN
+		ROLLBACK;
+		THROW 60006, 'Card balance more than Account balance', 1;
+	END;
 END;
 
 GO
@@ -695,13 +669,12 @@ GO
 /*
 	Тест на триггер Cards_UPDATE
 	Увеличение баланса на 25 долл
-	Ожидание: Баланс у карты ID = 10 увеличится на 25, а у ID = 3 останется исходное значение
 */
 
 DECLARE @cardsId TABLE(CardId INT)
 INSERT @cardsId
 VALUES 
-(3), (10)
+(10), (11)
 SELECT AccountFullInfo.AccountId, AccountBalance, CardsSumBalance, CardId, CardBalance
 FROM (SELECT Cards.Id AS CardId, Cards.Balance AS CardBalance, Cards.AccountId
 	  FROM Cards
